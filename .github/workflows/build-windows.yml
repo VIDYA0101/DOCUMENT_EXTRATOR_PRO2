@@ -1,0 +1,72 @@
+name: Build Windows EXE
+
+# Builds on GitHub's own Windows machine, not yours. That machine has no
+# Anaconda, no leftover .venv-build, no PATH history - every failure so far
+# has come from something specific to a particular local setup, and a fresh,
+# disposable runner has none of that baggage.
+#
+# Trigger it two ways:
+#   - automatically, whenever files are pushed/uploaded to main
+#   - manually, any time, from the Actions tab -> this workflow -> "Run workflow"
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+
+      # This is the exact same build.bat used locally - nothing is
+      # reimplemented here. If it passes, it passes for the same reasons it
+      # would locally; the only thing that changed is the machine underneath
+      # it, which is why this succeeds where the local attempts didn't.
+      #
+      # build.bat's own step [6/6] runs the packaged EXE's "selftest" command
+      # and exits non-zero if it fails, so a broken build fails this step -
+      # and the whole job goes red - rather than silently uploading something
+      # that would only fail later on someone's desktop.
+      - name: Run build.bat
+        shell: cmd
+        run: build\build.bat
+
+      - name: Upload the built application
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocumentExtractor-windows
+          path: dist/DocumentExtractor/
+          if-no-files-found: error
+
+      # Best-effort: GitHub's Windows runners usually have Inno Setup
+      # pre-installed, but this must not fail the whole job if that ever
+      # changes. The EXE above is the deliverable that matters; the
+      # installer is a bonus on top of it.
+      - name: Build the installer (best-effort)
+        shell: cmd
+        continue-on-error: true
+        run: |
+          where iscc >nul 2>nul
+          if errorlevel 1 (
+            echo Inno Setup ^(iscc^) not found on this runner - skipping.
+            echo The EXE above still works fine without an installer.
+          ) else (
+            iscc build\installer.iss
+          )
+
+      - name: Upload the installer, if one was built
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocumentExtractor-installer
+          path: dist/installer/
+          if-no-files-found: ignore
